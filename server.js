@@ -4,7 +4,7 @@ const puppeteer = require('puppeteer');
 const path = require('path');
 const dotenv = require('dotenv');
 const { pool } = require('./database/db');
-const { ensureCustomersTable, ensureCustomerPartsTable, ensureCustomerPartSequencesTable, ensurePartDateCodeSequencesTable, ensureReportsTable } = require('./database/init');
+const { ensureCustomersTable, ensureCustomerPartsTable, ensureCustomerPartSequencesTable } = require('./database/init');
 const {
   getCustomers,
   getCustomerById,
@@ -28,58 +28,13 @@ const {
   deleteSequence,
   advanceSequenceFromReport
 } = require('./controllers/customerSequenceController');
-const {
-  listReports,
-  getReportById,
-  getNablReportCounter,
-  createReport,
-  updateReport,
-  deleteReport,
-  getReportForEditor
-} = require('./controllers/reportController');
-const {
-  listPartNumbers,
-  listDateCodes,
-  ensureRelationship,
-  getSequence,
-  advanceSequence,
-  updateSequenceById,
-  deleteSequenceById
-} = require('./controllers/partDateCodeController');
 
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const app = express();
 
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught exception in backend server:', {
-    message: error.message,
-    stack: error.stack
-  });
-});
-
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled promise rejection in backend server:', reason);
-});
-
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
-
-app.get('/api/health/db', async (_req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  try {
-    await pool.query('SELECT 1');
-    res.json({ ok: true, database: 'connected' });
-  } catch (error) {
-    res.status(503).json({
-      ok: false,
-      database: 'disconnected',
-      message: error?.message || 'Database connection failed.'
-    });
-  }
-});
 
 app.get('/api/customers', getCustomers);
 app.get('/api/customers/', getCustomers);
@@ -103,21 +58,6 @@ app.post('/api/customer-part-sequences', createSequence);
 app.put('/api/customer-part-sequences/:id', updateSequence);
 app.delete('/api/customer-part-sequences/:id', deleteSequence);
 app.post('/api/customer-part-sequences/advance', advanceSequenceFromReport);
-app.get('/api/part-datecodes/parts', listPartNumbers);
-app.get('/api/part-datecodes/date-codes', listDateCodes);
-app.post('/api/part-datecodes', ensureRelationship);
-app.get('/api/part-datecodes/sequence', getSequence);
-app.post('/api/part-datecodes/advance', advanceSequence);
-app.put('/api/part-datecodes/:id', updateSequenceById);
-app.delete('/api/part-datecodes/:id', deleteSequenceById);
-app.get('/api/part-datecodes', (req, res) => res.json({ ok: true }));
-app.get('/api/reports', listReports);
-app.get('/api/reports/next-number', getNablReportCounter);
-app.get('/api/reports/:id', getReportById);
-app.get('/api/reports/:id/editor', getReportForEditor);
-app.post('/api/reports', createReport);
-app.put('/api/reports/:id', updateReport);
-app.delete('/api/reports/:id', deleteReport);
 
 app.post('/api/export-pdf', async (req, res) => {
   const { html } = req.body || {};
@@ -128,10 +68,7 @@ app.post('/api/export-pdf', async (req, res) => {
 
   let browser;
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: process.env.RENDER ? ['--no-sandbox', '--disable-setuid-sandbox'] : []
-    });
+    browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
     await page.emulateMediaType('print');
@@ -164,16 +101,6 @@ async function startServer() {
     await ensureCustomersTable();
     await ensureCustomerPartsTable();
     await ensureCustomerPartSequencesTable();
-    await ensurePartDateCodeSequencesTable();
-    await ensureReportsTable();
-
-    console.log('Mounted part-datecodes routes:',
-      '/api/part-datecodes/parts',
-      '/api/part-datecodes/date-codes',
-      '/api/part-datecodes',
-      '/api/part-datecodes/sequence',
-      '/api/part-datecodes/advance'
-    );
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on port ${PORT}`);

@@ -9,16 +9,7 @@ const pool = new Pool({
   port: Number(process.env.DB_PORT || 5432),
   database: process.env.DB_NAME,
   user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined
-});
-
-pool.on('error', (error) => {
-  console.error('Unexpected PostgreSQL pool error:', {
-    message: error.message,
-    code: error.code,
-    detail: error.detail
-  });
+  password: process.env.DB_PASSWORD
 });
 
 async function query(text, params) {

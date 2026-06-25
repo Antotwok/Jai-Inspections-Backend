@@ -7,7 +7,6 @@ async function getCustomers(req, res) {
         SELECT
           id,
           customer_code,
-          current_report_number,
           customer_name,
           customer_address,
           gst_number,
@@ -36,7 +35,6 @@ async function getCustomerById(req, res) {
         SELECT
           id,
           customer_code,
-          current_report_number,
           customer_name,
           customer_address,
           gst_number,
@@ -65,7 +63,6 @@ async function getCustomerById(req, res) {
 async function createCustomer(req, res) {
   const {
     customer_code,
-    current_report_number = 0,
     customer_name,
     customer_address = null,
     gst_number = null,
@@ -96,7 +93,6 @@ async function createCustomer(req, res) {
       `
         INSERT INTO customers (
           customer_code,
-          current_report_number,
           customer_name,
           customer_address,
           gst_number,
@@ -106,12 +102,11 @@ async function createCustomer(req, res) {
           created_at,
           updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING *
       `,
       [
         customer_code.trim(),
-        Number(current_report_number) || 0,
         customer_name.trim(),
         customer_address,
         gst_number,
@@ -128,9 +123,7 @@ async function createCustomer(req, res) {
     }
 
     console.error('Failed to create customer:', error);
-    res.status(500).json({
-      message: error?.message || 'Failed to create customer.'
-    });
+    res.status(500).json({ message: 'Failed to create customer.' });
   }
 }
 
@@ -138,7 +131,6 @@ async function updateCustomer(req, res) {
   const customerId = Number(req.params.id);
   const {
     customer_code,
-    current_report_number = 0,
     customer_name,
     customer_address = null,
     gst_number = null,
@@ -179,20 +171,18 @@ async function updateCustomer(req, res) {
         UPDATE customers
         SET
           customer_code = $1,
-          current_report_number = $2,
-          customer_name = $3,
-          customer_address = $4,
-          gst_number = $5,
-          contact_person = $6,
-          phone_number = $7,
-          email = $8,
+          customer_name = $2,
+          customer_address = $3,
+          gst_number = $4,
+          contact_person = $5,
+          phone_number = $6,
+          email = $7,
           updated_at = CURRENT_TIMESTAMP
-        WHERE id = $9
+        WHERE id = $8
         RETURNING *
       `,
       [
         customer_code.trim(),
-        Number(current_report_number) || 0,
         customer_name.trim(),
         customer_address,
         gst_number,
@@ -210,9 +200,7 @@ async function updateCustomer(req, res) {
     }
 
     console.error('Failed to update customer:', error);
-    res.status(500).json({
-      message: error?.message || 'Failed to update customer.'
-    });
+    res.status(500).json({ message: 'Failed to update customer.' });
   }
 }
 
