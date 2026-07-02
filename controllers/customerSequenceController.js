@@ -3,42 +3,76 @@ const { query } = require('../database/db');
 async function searchSequence(req, res) {
   try {
     const customerId = Number(req.query.customerId);
+    const customerQuery = String(req.query.customer || req.query.q || '').trim();
     const partNumber = String(req.query.partNumber || '').trim();
+    const dateCode = String(req.query.dateCode || '').trim();
 
-    if (!customerId || Number.isNaN(customerId) || !partNumber) {
-      return res.status(400).json({ message: 'customerId and partNumber are required.' });
+    const params = [];
+    const conditions = [];
+
+    if (customerId && !Number.isNaN(customerId)) {
+      params.push(customerId);
+      conditions.push(`EXISTS (
+        SELECT 1
+        FROM customer_parts cp2
+        WHERE cp2.part_number = pds.part_number
+          AND cp2.customer_id = $${params.length}
+      )`);
+    } else if (customerQuery) {
+      params.push(`%${customerQuery}%`);
+      conditions.push(`EXISTS (
+        SELECT 1
+        FROM customer_parts cp2
+        INNER JOIN customers c2 ON c2.id = cp2.customer_id
+        WHERE cp2.part_number = pds.part_number
+          AND (c2.customer_name ILIKE $${params.length} OR c2.customer_code ILIKE $${params.length})
+      )`);
     }
+
+    if (partNumber) {
+      params.push(`%${partNumber}%`);
+      conditions.push(`pds.part_number ILIKE $${params.length}`);
+    }
+
+    if (dateCode) {
+      params.push(`%${dateCode}%`);
+      conditions.push(`pds.date_code ILIKE $${params.length}`);
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const result = await query(
       `
         SELECT
-          cps.id,
-          cps.customer_id,
-          c.customer_name,
-          cps.part_number,
-          cps.sequence_prefix,
-          cps.current_sequence,
-          cps.last_report_no,
-          cps.remarks,
-          cps.created_at,
-          cps.updated_at
-        FROM customer_part_sequences cps
-        INNER JOIN customers c ON c.id = cps.customer_id
-        WHERE cps.customer_id = $1
-          AND cps.part_number = $2
+          pds.id,
+          customers.customer_id,
+          COALESCE(customers.customer_name, '') AS customer_name,
+          pds.part_number,
+          pds.date_code,
+          pds.current_sequence,
+          CONCAT('J', LPAD((COALESCE(pds.current_sequence, 0) + 1)::text, 3, '0')) AS next_available_sequence,
+          pds.updated_at
+        FROM part_datecode_sequences pds
+        LEFT JOIN (
+          SELECT
+            cp.part_number,
+            string_agg(DISTINCT c.customer_name, ', ') AS customer_name,
+            MIN(cp.customer_id) AS customer_id
+          FROM customer_parts cp
+          INNER JOIN customers c ON c.id = cp.customer_id
+          GROUP BY cp.part_number
+        ) customers ON customers.part_number = pds.part_number
+        ${whereClause}
+        ORDER BY pds.part_number, pds.date_code
       `,
-      [customerId, partNumber]
+      params
     );
 
     if (!result.rows.length) {
-      return res.status(404).json({ message: 'No sequence record found.' });
+      return res.json([]);
     }
 
-    const row = result.rows[0];
-    res.json({
-      ...row,
-      next_available_sequence: `${row.sequence_prefix || 'J'}${String((row.current_sequence || 0) + 1).padStart(3, '0')}`
-    });
+    res.json(result.rows);
   } catch (error) {
     console.error('Failed to search sequence:', error);
     res.status(500).json({ message: 'Failed to search sequence.' });
@@ -121,42 +155,60 @@ async function createSequence(req, res) {
 
 async function updateSequence(req, res) {
   const sequenceId = Number(req.params.id);
-  const customerId = Number(req.body?.customer_id);
-  const partNumber = String(req.body?.part_number || '').trim();
-  const sequencePrefix = String(req.body?.sequence_prefix || 'J').trim() || 'J';
-  const currentSequence = Number(req.body?.current_sequence ?? 0) || 0;
-  const remarks = req.body?.remarks ?? null;
-  const lastReportNo = req.body?.last_report_no ?? null;
-
-  if (!customerId || Number.isNaN(customerId)) {
-    return res.status(400).json({ message: 'customer_id is required.' });
-  }
-
-  if (!partNumber) {
-    return res.status(400).json({ message: 'part_number is required.' });
-  }
+  const currentSequence = Number(req.body?.current_sequence);
 
   try {
-    const result = await query(
+    const existing = await query(
       `
-        UPDATE customer_part_sequences
-        SET
-          customer_id = $1,
-          part_number = $2,
-          sequence_prefix = $3,
-          current_sequence = $4,
-          last_report_no = $5,
-          remarks = $6,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $7
-        RETURNING *
+        SELECT *
+        FROM part_datecode_sequences
+        WHERE id = $1
       `,
-      [customerId, partNumber, sequencePrefix, currentSequence, lastReportNo, remarks, sequenceId]
+      [sequenceId]
     );
 
-    if (!result.rows.length) {
+    if (!existing.rows.length) {
       return res.status(404).json({ message: 'Sequence record not found.' });
     }
+
+    const nextSequence = Number.isFinite(currentSequence) ? Math.max(0, Math.floor(currentSequence)) : existing.rows[0].current_sequence;
+    const updated = await query(
+      `
+        UPDATE part_datecode_sequences
+        SET current_sequence = $1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $2
+        RETURNING *
+      `,
+      [nextSequence, sequenceId]
+    );
+
+    const row = updated.rows[0];
+    const result = await query(
+      `
+        SELECT
+          pds.id,
+          customers.customer_id,
+          COALESCE(customers.customer_name, '-') AS customer_name,
+          pds.part_number,
+          pds.date_code,
+          pds.current_sequence,
+          CONCAT('J', LPAD((COALESCE(pds.current_sequence, 0) + 1)::text, 3, '0')) AS next_available_sequence,
+          pds.updated_at
+        FROM part_datecode_sequences pds
+        LEFT JOIN (
+          SELECT
+            cp.part_number,
+            string_agg(DISTINCT c.customer_name, ', ') AS customer_name,
+            MIN(cp.customer_id) AS customer_id
+          FROM customer_parts cp
+          INNER JOIN customers c ON c.id = cp.customer_id
+          GROUP BY cp.part_number
+        ) customers ON customers.part_number = pds.part_number
+        WHERE pds.id = $1
+      `,
+      [row.id]
+    );
 
     res.json(result.rows[0]);
   } catch (error) {
